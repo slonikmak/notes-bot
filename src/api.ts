@@ -45,7 +45,7 @@ export function startApi(): void {
         return send(res, 200, apiTopics(numParam(q.get('user_id'), 'user_id')));
       }
 
-      // GET /api/notes?user_id=&topic_id=&since=2026-06-10T12:00:00 (UTC)
+      // GET /api/notes?user_id=&topic_id=&topic_name=&since=2026-06-10T12:00:00 (UTC)
       if (req.method === 'GET' && url.pathname === '/api/notes') {
         return send(
           res,
@@ -53,6 +53,7 @@ export function startApi(): void {
           apiNotes({
             userId: numParam(q.get('user_id'), 'user_id'),
             topicId: numParam(q.get('topic_id'), 'topic_id'),
+            topicName: q.get('topic_name') ?? undefined,
             since: q.get('since') ?? undefined,
           }),
         );

@@ -22,6 +22,11 @@ export interface Note {
 const db = new Database(config.dbPath);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
+db.function('contains_utf8', (val: unknown, search: unknown) => {
+  if (typeof val !== 'string' || typeof search !== 'string') return 0;
+  return val.toLowerCase().includes(search.toLowerCase()) ? 1 : 0;
+});
+
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS topics (
@@ -162,7 +167,12 @@ export function apiTopics(userId?: number) {
     .all(...params);
 }
 
-export function apiNotes(filter: { userId?: number; topicId?: number; since?: string }) {
+export function apiNotes(filter: {
+  userId?: number;
+  topicId?: number;
+  topicName?: string;
+  since?: string;
+}) {
   const conds: string[] = [];
   const params: (number | string)[] = [];
   if (filter.userId !== undefined) {
@@ -172,6 +182,10 @@ export function apiNotes(filter: { userId?: number; topicId?: number; since?: st
   if (filter.topicId !== undefined) {
     conds.push('n.topic_id = ?');
     params.push(filter.topicId);
+  }
+  if (filter.topicName !== undefined) {
+    conds.push('contains_utf8(t.name, ?)');
+    params.push(filter.topicName);
   }
   if (filter.since) {
     // принимает '2026-06-10T12:00:00' и '2026-06-10 12:00:00' (UTC)
