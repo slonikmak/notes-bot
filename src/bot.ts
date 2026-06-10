@@ -3,6 +3,8 @@ import type { Chat, Message, MessageOrigin } from 'grammy/types';
 import { config } from './config';
 import * as store from './db';
 import { transcribeVoice } from './transcribe';
+import { logger } from './logger';
+
 
 const NAME_LIMIT = 64;
 const NOTE_PREVIEW = 300;
@@ -193,9 +195,11 @@ async function applyDraftEdit(
 
   const topic = store.getTopic(draft.topicId, userId);
   if (!topic) {
+    logger.warn(`User ${userId} attempted to save voice draft but topic ${draft.topicId} was deleted`, 'bot');
     await ctx.reply('Тема этого черновика уже удалена — не сохранил.');
     return;
   }
+  logger.info(`User ${userId} saved voice note in topic "${topic.name}"`, 'bot');
   store.addNote(topic, draft.sourceType, newText, draft.forwardFrom);
   if (ctx.chat) {
     try {
@@ -212,16 +216,19 @@ async function applyDraftEdit(
 }
 
 async function saveIncoming(ctx: Context, msg: Message, topic: store.Topic): Promise<void> {
+  const userId = ctx.from?.id;
   // пересланное сообщение: текст/подпись сохраняем сразу, войс внутри — через превью
   if (msg.forward_origin) {
     const from = describeOrigin(msg.forward_origin);
     const text = msg.text ?? msg.caption ?? null;
     if (text) {
+      logger.info(`User ${userId} saved forwarded text note in topic "${topic.name}"`, 'bot');
       store.addNote(topic, 'forward', text, from);
       await react(ctx, '✍');
       return;
     }
     if (msg.voice || msg.audio) {
+      logger.info(`User ${userId} sent forwarded voice/audio for transcription in topic "${topic.name}"`, 'bot');
       await react(ctx, '👀');
       const recognized = await transcribeVoice(
         await fileUrl(ctx, (msg.voice ?? msg.audio)!.file_id),
@@ -229,12 +236,14 @@ async function saveIncoming(ctx: Context, msg: Message, topic: store.Topic): Pro
       await sendVoicePreview(ctx, topic, recognized, from);
       return;
     }
+    logger.warn(`User ${userId} sent forwarded message without text/voice`, 'bot');
     await ctx.reply('В пересланном сообщении нет текста — не сохранил.');
     return;
   }
 
   // голосовое / аудио: распознаём и даём поправить перед сохранением
   if (msg.voice || msg.audio) {
+    logger.info(`User ${userId} sent voice/audio for transcription in topic "${topic.name}"`, 'bot');
     await react(ctx, '👀');
     const recognized = await transcribeVoice(
       await fileUrl(ctx, (msg.voice ?? msg.audio)!.file_id),
@@ -245,11 +254,13 @@ async function saveIncoming(ctx: Context, msg: Message, topic: store.Topic): Pro
 
   // обычный текст
   if (msg.text) {
+    logger.info(`User ${userId} saved text note in topic "${topic.name}"`, 'bot');
     store.addNote(topic, 'text', msg.text);
     await react(ctx, '✍');
     return;
   }
 
+  logger.warn(`User ${userId} sent unsupported message type`, 'bot');
   await ctx.reply('Такое не сохраню. Кидай текст, войс или пересланное сообщение.');
 }
 
@@ -265,6 +276,7 @@ async function handlePending(
   }
   try {
     if (pending.action === 'new_topic') {
+      logger.info(`User ${userId} creating new topic: "${name}"`, 'bot');
       const topic = store.createTopic(userId, name);
       store.setActiveTopic(userId, topic.id);
       pendingInput.delete(userId);
@@ -273,10 +285,12 @@ async function handlePending(
         reply_markup: kb,
       });
     } else {
+      logger.info(`User ${userId} renaming topic id=${pending.topicId} to "${name}"`, 'bot');
       store.renameTopic(pending.topicId, userId, name);
       pendingInput.delete(userId);
       const topic = store.getTopic(pending.topicId, userId);
       if (!topic) {
+        logger.warn(`Renamed topic id=${pending.topicId} not found after renaming`, 'bot');
         const { text, kb } = renderTopics(userId);
         await ctx.reply(text, { reply_markup: kb });
         return;
@@ -285,6 +299,7 @@ async function handlePending(
       await ctx.reply(`Переименовал.\n\n${text}`, { reply_markup: kb });
     }
   } catch (e) {
+    logger.error(`Error handling pending input for user ${userId}`, e, 'bot');
     if (store.isDuplicateError(e)) {
       await ctx.reply('Такая тема уже есть. Напиши другое название (или /cancel).');
       return;
@@ -302,6 +317,7 @@ export function createBot(): Bot {
   bot.use(async (ctx, next) => {
     const id = ctx.from?.id;
     if (config.allowedUserIds.length && (!id || !config.allowedUserIds.includes(id))) {
+      logger.warn(`Access denied for user ID: ${id}`, 'bot');
       if (ctx.message) await ctx.reply(`Доступ закрыт. Твой id: ${id} — попроси добавить его в ALLOWED_USER_IDS.`);
       return;
     }
@@ -482,7 +498,7 @@ export function createBot(): Bot {
   });
 
   bot.catch((err) => {
-    console.error('Ошибка обработки апдейта:', err.error);
+    logger.error('Ошибка обработки апдейта:', err.error, 'bot');
   });
 
   return bot;
