@@ -200,19 +200,20 @@ async function applyDraftEdit(
     return;
   }
   logger.info(`User ${userId} saved voice note in topic "${topic.name}"`, 'bot');
-  store.addNote(topic, draft.sourceType, newText, draft.forwardFrom);
+  const note = store.addNote(topic, draft.sourceType, newText, draft.forwardFrom);
   if (ctx.chat) {
     try {
+      const kb = new InlineKeyboard().text('🔗 Слить с предыдущей', `merge:${note.id}`);
       await ctx.api.editMessageText(
         ctx.chat.id,
         draftMsgId,
-        `✍ Записал с правкой в «${topic.name}».`,
+        `Записал с правкой в «${topic.name}».`,
+        { reply_markup: kb },
       );
     } catch {
       // превью могли удалить руками — не критично
     }
   }
-  await react(ctx, '✍');
 }
 
 async function saveIncoming(ctx: Context, msg: Message, topic: store.Topic): Promise<void> {
@@ -223,8 +224,12 @@ async function saveIncoming(ctx: Context, msg: Message, topic: store.Topic): Pro
     const text = msg.text ?? msg.caption ?? null;
     if (text) {
       logger.info(`User ${userId} saved forwarded text note in topic "${topic.name}"`, 'bot');
-      store.addNote(topic, 'forward', text, from);
-      await react(ctx, '✍');
+      const note = store.addNote(topic, 'forward', text, from);
+      const kb = new InlineKeyboard().text('🔗 Слить с предыдущей', `merge:${note.id}`);
+      await ctx.reply(`Записал в «${topic.name}»`, {
+        reply_markup: kb,
+        reply_parameters: { message_id: msg.message_id },
+      });
       return;
     }
     if (msg.voice || msg.audio) {
@@ -255,8 +260,12 @@ async function saveIncoming(ctx: Context, msg: Message, topic: store.Topic): Pro
   // обычный текст
   if (msg.text) {
     logger.info(`User ${userId} saved text note in topic "${topic.name}"`, 'bot');
-    store.addNote(topic, 'text', msg.text);
-    await react(ctx, '✍');
+    const note = store.addNote(topic, 'text', msg.text);
+    const kb = new InlineKeyboard().text('🔗 Слить с предыдущей', `merge:${note.id}`);
+    await ctx.reply(`Записал в «${topic.name}»`, {
+      reply_markup: kb,
+      reply_parameters: { message_id: msg.message_id },
+    });
     return;
   }
 
@@ -438,10 +447,11 @@ export function createBot(): Bot {
       await safeEdit(ctx, 'Тема уже удалена — некуда сохранять.', new InlineKeyboard());
       return;
     }
-    store.addNote(topic, draft.sourceType, draft.text, draft.forwardFrom);
+    const note = store.addNote(topic, draft.sourceType, draft.text, draft.forwardFrom);
     voiceDrafts.delete(msgId);
     if (lastDraft.get(ctx.from.id) === msgId) lastDraft.delete(ctx.from.id);
-    await safeEdit(ctx, `✍ Записал в «${topic.name}».`, new InlineKeyboard());
+    const kb = new InlineKeyboard().text('🔗 Слить с предыдущей', `merge:${note.id}`);
+    await safeEdit(ctx, `Записал в «${topic.name}».`, kb);
   });
 
   bot.callbackQuery('vcancel', async (ctx) => {
@@ -451,6 +461,20 @@ export function createBot(): Bot {
       if (lastDraft.get(ctx.from.id) === msgId) lastDraft.delete(ctx.from.id);
     }
     await safeEdit(ctx, '✖ Не сохранил.', new InlineKeyboard());
+  });
+
+  bot.callbackQuery(/^merge:(\d+)$/, async (ctx) => {
+    const noteId = Number(ctx.match[1]);
+    const userId = ctx.from.id;
+    const success = store.mergeNotes(noteId, userId);
+    if (success) {
+      await safeEdit(ctx, 'Слито с предыдущей заметкой.', new InlineKeyboard());
+    } else {
+      await ctx.answerCallbackQuery({
+        text: 'Не удалось слить (возможно, нет предыдущей заметки в этой теме)',
+        show_alert: true,
+      });
+    }
   });
 
   // всё остальное: ввод названия, правка войса либо заметка в активную тему

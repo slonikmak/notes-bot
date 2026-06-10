@@ -202,3 +202,23 @@ export function apiNotes(filter: {
     )
     .all(...params);
 }
+
+export function mergeNotes(noteId: number, userId: number): boolean {
+  const note = db
+    .prepare('SELECT * FROM notes WHERE id = ? AND user_id = ?')
+    .get(noteId, userId) as Note | undefined;
+  if (!note) return false;
+
+  const prevNote = db
+    .prepare(
+      'SELECT * FROM notes WHERE topic_id = ? AND user_id = ? AND id < ? ORDER BY id DESC LIMIT 1',
+    )
+    .get(note.topic_id, userId, note.id) as Note | undefined;
+  if (!prevNote) return false;
+
+  const mergedText = prevNote.text + '\n\n' + note.text;
+  db.prepare('UPDATE notes SET text = ? WHERE id = ?').run(mergedText, prevNote.id);
+  db.prepare('DELETE FROM notes WHERE id = ?').run(note.id);
+  return true;
+}
+
