@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+notes.db
+notes.db-shm
+notes.db-wal
+__pycache__/
+*.pyc
